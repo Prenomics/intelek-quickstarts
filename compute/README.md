@@ -1,29 +1,46 @@
-# Data pipeline demo: lead assignment
+# Compute quickstart: lead assignment
 
 A small end-to-end pipeline that shows the same business problem solved with each tool:
 leads arrive from 3 sources in different formats, get unified, validated, assigned to the
 sales person who speaks their language and knows their topic, and finally reported on.
 
+**Pick your database:**
+
+| Engine | Folder |
+|--------|--------|
+| PostgreSQL | [postgres/](postgres/) |
+| ClickHouse | [clickhouse/](clickhouse/) |
+
+Each folder is self-contained (its own code, `requirements.txt`, `.env` and README) and has the same structure,
+so `diff -r postgres clickhouse` shows only what changes between engines. The sample data in
+[../reference_data/](../reference_data/) is shared.
+
 ```
-reference_data/*.xlsx ──load──▶ demo_raw.*            (Excels as-is)
+reference_data/*.xlsx ──load──▶ leads_web_form, leads_trade_fair,      (Excels as-is)
+                                leads_linkedin, sales_people
                                     │
              sql/01_unify_leads.sql ▼
-                               demo_stg.leads          (unified + normalized)
+                               leads                    (unified + normalized)
                                     │
      python_ipynb/basic_transf.py   ├──▶ data-quality report
                                     │
   python_ipynb/assign_leads.py|ipynb▼
-                               demo_stg.lead_assignments
+                               lead_assignments
                                     │
                                dbt  ▼
-            demo_mart.mart_lead_assignments, demo_mart.mart_seller_workload
+            mart_lead_assignments, mart_seller_workload
 ```
+
+Both engines put every table and view in one place that must already exist: a schema in Postgres (`DB_SCHEMA`,
+e.g. `bizdoc`), a database in ClickHouse (`DB_NAME`, e.g. `pre_bizdoc`). See each folder's README.
 
 ## Contents
 
+Paths are relative to the engine folder.
+
 | # | Demo | Files |
 |---|------|-------|
-| 1 | Reference data | `../reference_data/*.xlsx` (built by `generate_reference_data.py`), loader `load_to_postgres.py` |
+| 1 | Reference data | `../../reference_data/*.xlsx` (built by `generate_reference_data.py`), loader `load_reference_data.py` |
 | 2 | SQL | `sql/01_unify_leads.sql` |
 | 3 | Python basic (single file) | `python_ipynb/basic_transf.py` → `run_checks(...)` |
 | 4 | Python complex (package) | `python_ipynb/assign_leads.py` → `run_assignment(...)`, helpers in `python_ipynb/utils/` |
@@ -53,7 +70,7 @@ Some data-quality issues are injected on purpose, so the checks and the assignme
 | `LI-90003` | same person as `WEB-0003` (cross-source duplicate) |
 | `S08` | inactive seller, who must never get leads |
 
-To change the data, edit and re-run `generate_reference_data.py` (seeded, so the output is deterministic).
+To change the data, edit and re-run `reference_data/generate_reference_data.py` (seeded, so the output is deterministic).
 
 ### 4. Assignment rules
 
@@ -64,14 +81,14 @@ Leads are processed in order of arrival. For each lead:
 
 Within a tier, the seller with the lowest *assigned / capacity* ratio wins (ties go to the lower `seller_id`).
 Each row stores the `match_type` and a human-readable `reason`.
-The process is incremental: only leads not yet in `demo_stg.lead_assignments` are assigned, unless you use `--full-refresh`.
+The process is incremental: only leads not yet in `lead_assignments` are assigned, unless you use `--full-refresh`.
 
 ```
 python_ipynb/
 ├── assign_leads.py          # main: run_assignment() + CLI, uses relative imports (from .utils...)
 ├── assign_leads.ipynb       # same flow as a notebook
 └── utils/
-    ├── db.py                # engine, read/write 'schema.table'
+    ├── db.py                # connection + read/write tables (the only engine-specific module)
     └── matching/
         ├── sellers.py       # normalize the raw sellers table
         ├── candidates.py    # candidate tiers + least-loaded pick
@@ -79,7 +96,7 @@ python_ipynb/
 ```
 
 **About relative imports.** `assign_leads.py` uses `from .utils...`, so it has to run as a module
-(`python -m python_ipynb.assign_leads`) from `compute/`. A notebook is not part of a package, so
+(`python -m python_ipynb.assign_leads`) from the engine folder. A notebook is not part of a package, so
 `from .utils` fails there. Instead the notebook imports `utils` relative to its own folder, which is the
 Jupyter working directory. Inside `utils/`, the modules still import each other relatively.
 
@@ -89,74 +106,36 @@ Every Python entry point takes a single `creds` argument:
 
 | Value | When |
 |-------|------|
-| `dict` with keys `DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME` | **In Intelek.** The secret object is injected into the function as a dictionary |
-| `None` (default) | **On your laptop.** Reads the same variables from the `.env` file at the repo root |
+| `dict` with keys `DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME` (+ `DB_SCHEMA` on Postgres) | **In Intelek.** The secret object is injected into the function as a dictionary |
+| `None` (default) | **On your laptop.** Reads the same variables from the `.env` file in the engine folder |
 
-**On your laptop**
+**On your laptop:** copy the engine folder's `.env.example` to `.env` (git-ignored) and fill it in. Python loads it
+automatically, and its values take precedence over variables with the same name already set in your shell.
+dbt and the SQL client read the same variables from the shell, so load the file first:
+`set -a; source .env; set +a`.
 
-```bash
-cp .env.example .env   # git-ignored, then fill it in
-```
+**In Intelek:**
 
-`.env` uses the same names as the secret object, so one file works for Python, dbt and `psql`.
-Python loads it automatically, and its values take precedence over variables with the same name already
-set in your shell. For dbt and `psql`, load it into the shell first:
-
-```bash
-set -a; source .env; set +a
-```
-
-**In Intelek**
-
-1. Create a secret object with the keys `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` and `DB_NAME`.
+1. Create a secret object with the keys `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` and `DB_NAME`
+   (on Postgres, also `DB_SCHEMA`).
 2. Create a Python task that points to the function, and inject the secret as `creds`:
 
-| Task | Function | Secret injected as |
-|------|----------|--------------------|
-| Load reference data | `reference_data/load_to_postgres.py` → `load_reference_data` | `creds` |
-| Data-quality checks | `compute/python_ipynb/basic_transf.py` → `run_checks` | `creds` |
-| Lead assignment | `compute/python_ipynb/assign_leads.py` → `run_assignment` | `creds` |
+| Task | Function (in the engine folder) | Secret injected as |
+|------|----------------------------------|--------------------|
+| Load reference data | `load_reference_data.py` → `load_reference_data` | `creds` |
+| Data-quality checks | `python_ipynb/basic_transf.py` → `run_checks` | `creds` |
+| Lead assignment | `python_ipynb/assign_leads.py` → `run_assignment` | `creds` |
 
 **Notebook.** Intelek runs notebooks with papermill, which injects a cell with the parameters right after
 the cell tagged `parameters`. In `assign_leads.ipynb` that cell only sets defaults (`creds = None`, table
 names, flags). The database connection is opened in the next cell, so it uses the injected values.
 
-**dbt** has no Python function, so [dbt/profiles.yml](dbt/profiles.yml) reads the same `DB_*` environment
-variables. The file holds no secrets and is committed. dbt picks it up from the project folder.
+**dbt** has no Python function, so `dbt/profiles.yml` reads the same `DB_*` environment variables.
+The file holds no secrets and is committed. dbt picks it up from the project folder.
 
-## How to run
+## Expected result with the bundled data
 
-Prerequisites: Postgres, and the packages in `requirements.txt` (dbt needs the **dbt-postgres** adapter, version 1.10 or later).
-Commands run from the repo root unless they say otherwise.
-
-```bash
-pip install -r compute/requirements.txt
-cp .env.example .env              # then fill it in
-set -a; source .env; set +a       # only needed for psql and dbt
-
-# 1. Load the Excels into demo_raw (optional: regenerate them first)
-python reference_data/generate_reference_data.py
-python reference_data/load_to_postgres.py
-
-# 2. Unify the leads into demo_stg.leads
-PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -p $DB_PORT -U $DB_USER -d $DB_NAME -f compute/sql/01_unify_leads.sql
-
-# 3. Data-quality checks (or, from Python: run_checks(fail_on_error=True))
-python compute/python_ipynb/basic_transf.py
-
-# 4. Assign leads to sellers into demo_stg.lead_assignments (run as a module from compute/)
-cd compute
-python -m python_ipynb.assign_leads                  # incremental
-python -m python_ipynb.assign_leads --full-refresh   # rebuild everything
-python -m python_ipynb.assign_leads --dry-run        # compute only
-
-# 5. ...or run python_ipynb/assign_leads.ipynb top to bottom instead of step 4
-
-# 6. dbt
-cd dbt && dbt build      # staging views in demo_stg, marts in demo_mart, plus tests
-```
-
-### Expected result with the bundled data
+The same on every engine:
 
 - **Checks:** 17 checks; 5 report errors (the injected issues) and 2 report warnings (the duplicate pair, and 18 leads with no specialist for their language + topic).
 - **Assignment:** 100 leads, 10 unassigned (`FAIR-005` because nobody speaks Italian, 9 because candidates are at capacity), and S08 gets 0 leads.

@@ -1,0 +1,6 @@
+pandas
+openpyxl
+clickhouse-connect
+python-dotenv
+jupyter
+dbt-clickhouse>=1.9

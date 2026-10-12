@@ -1,0 +1,25 @@
+
+# Demo dbt project: builds reporting tables on top of the lead-assignment pipeline.
+# Everything lives in the DB_NAME database (ClickHouse):
+#
+#   sales_people       (Excel, as-is)                  \
+#   leads              (sql/01_unify_leads.sql)         >-- staging views (stg_*) --> marts (mart_*)
+#   lead_assignments   (python_ipynb/assign_leads.py)  /
+name: 'intelek_quickstart'
+version: '1.0.0'
+
+# Connection profile, see profiles.yml (values come from the DB_* env vars in .env)
+profile: 'intelek_quickstart_clickhouse'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:         # directories to be removed by `dbt clean`
+  - "target"
+  - "dbt_packages"
+
+# Materializations are set in each model with {{ config(...) }}.

@@ -1,0 +1,17 @@
+# dbt reads this file from the project folder (no need to copy it to ~/.dbt).
+# It holds no secrets: every value comes from an environment variable.
+#   Locally:  load compute/clickhouse/.env into your shell (see compute/clickhouse/README.md)
+#   Intelek:  expose the secret object keys as environment variables (same names)
+intelek_quickstart_clickhouse:
+  target: dev
+  outputs:
+    dev:
+      type: clickhouse
+      driver: http
+      host: "{{ env_var('DB_HOST') }}"
+      port: "{{ env_var('DB_PORT', '8123') | as_number }}"
+      secure: "{{ (env_var('DB_PORT', '8123') == '8443') | as_bool }}"   # HTTPS, e.g. ClickHouse Cloud
+      user: "{{ env_var('DB_USER') }}"
+      password: "{{ env_var('DB_PASSWORD') }}"
+      schema: "{{ env_var('DB_NAME') }}"   # in ClickHouse, schema = database; must already exist
+      threads: 4

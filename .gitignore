@@ -5,3 +5,6 @@ __pycache__/
 .ipynb_checkpoints/
 .venv/
 .vscode/
+
+# Excel lock files
+~$*

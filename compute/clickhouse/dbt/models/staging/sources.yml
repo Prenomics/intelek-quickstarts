@@ -1,0 +1,19 @@
+version: 2
+
+# Both sources are tables of the DB_NAME database (in ClickHouse, schema = database)
+sources:
+  - name: raw
+    description: "Reference Excels loaded as-is (load_reference_data.py)"
+    schema: "{{ env_var('DB_NAME') }}"
+    tables:
+      - name: sales_people
+        description: "Sales people: languages and specialties as ';'-separated lists"
+
+  - name: pipeline
+    description: "Tables built outside dbt by the SQL and Python steps of the demo"
+    schema: "{{ env_var('DB_NAME') }}"
+    tables:
+      - name: leads
+        description: "Unified and normalized leads from the 3 sources (sql/01_unify_leads.sql)"
+      - name: lead_assignments
+        description: "Lead -> seller assignments (python_ipynb/assign_leads.py)"
