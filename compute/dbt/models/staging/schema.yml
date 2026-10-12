@@ -1,0 +1,34 @@
+version: 2
+
+models:
+  - name: stg_sales_people
+    description: "Sales people with normalized column names; languages and specialties as text arrays"
+    columns:
+      - name: seller_id
+        data_tests: [unique, not_null]
+      - name: max_open_leads
+        data_tests: [not_null]
+
+  - name: stg_leads
+    description: "Unified leads (one row per lead)"
+    columns:
+      - name: lead_id
+        data_tests: [unique, not_null]
+
+  - name: stg_lead_assignments
+    description: "Lead -> seller assignments produced by the Python step"
+    columns:
+      - name: lead_id
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_leads')
+                field: lead_id
+      - name: seller_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_sales_people')
+                field: seller_id

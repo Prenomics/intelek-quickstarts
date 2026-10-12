@@ -1,0 +1,7 @@
+# Local credentials (template in .env.example)
+.env
+
+__pycache__/
+.ipynb_checkpoints/
+.venv/
+.vscode/

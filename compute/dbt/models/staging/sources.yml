@@ -1,0 +1,18 @@
+version: 2
+
+sources:
+  - name: demo_raw
+    description: "Reference Excels loaded as-is (reference_data/load_to_postgres.py)"
+    schema: demo_raw
+    tables:
+      - name: sales_people
+        description: "Sales people: languages and specialties as ';'-separated lists"
+
+  - name: demo_stg
+    description: "Tables built outside dbt by the SQL and Python steps of the demo"
+    schema: demo_stg
+    tables:
+      - name: leads
+        description: "Unified and normalized leads from the 3 sources (sql/01_unify_leads.sql)"
+      - name: lead_assignments
+        description: "Lead -> seller assignments (python_ipynb/assign_leads.py)"
