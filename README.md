@@ -11,7 +11,7 @@ Sample data shared by every example is in [reference_data/](reference_data/).
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.11+ (pinned dependencies need it; 3.12 recommended)
 - A PostgreSQL or ClickHouse database you can create tables in
 
 ## Credentials

@@ -24,7 +24,7 @@ unqualified table names; dbt uses it as its target schema.
 ## How to run
 
 Prerequisites: a Postgres database, `psql`, and the packages in `requirements.txt`
-(dbt needs the **dbt-postgres** adapter, version 1.10 or later). Commands run from this folder unless they say otherwise.
+(pinned versions; dbt runs with the **dbt-postgres** adapter). Commands run from this folder unless they say otherwise.
 
 ```bash
 cd compute/postgres

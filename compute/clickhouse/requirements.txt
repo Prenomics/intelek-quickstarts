@@ -1,6 +1,7 @@
-pandas
-openpyxl
-clickhouse-connect
-python-dotenv
-jupyter
-dbt-clickhouse>=1.9
+pandas==3.0.6
+openpyxl==3.1.5
+clickhouse-connect==1.11.0
+python-dotenv==1.2.4
+jupyter==1.1.1
+dbt-core==1.11.16
+dbt-clickhouse==1.10.3
