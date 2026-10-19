@@ -12,7 +12,7 @@
 --
 -- Target: Neon. Run the whole file as the project owner role (Neon SQL Editor or psql -f).
 -- Idempotent: drops and recreates the three tables in a single transaction. Dropping the
--- tables also drops their grants, so run create_user.sql (section 3) again afterwards.
+-- tables also drops any grants on them, so re-grant read access to your ingestion user.
 
 BEGIN;
 
