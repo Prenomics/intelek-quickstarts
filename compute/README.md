@@ -247,9 +247,10 @@ dbt and the SQL client read the same variables from the shell, so load the file 
 | Data cleaning | `python_ipynb/basic_transf.py` → `run_cleaning` | `creds` |
 | Lead assignment | `python_ipynb/assign_leads.py` → `run_assignment` | `creds` |
 
-**Notebook.** Intelek runs notebooks with papermill, which injects a cell with the parameters right after
-the cell tagged `parameters`. In `assign_leads.ipynb` that cell only sets defaults (`creds = None`, table
-names, flags). The database connection is opened in the next cell, so it uses the injected values.
+**Notebook.** Intelek runs notebooks with papermill and injects `creds` in the first cell. The cell tagged
+`parameters` in `assign_leads.ipynb` sets `creds = None` only if it is not defined yet, so it works both with
+that injection and with plain papermill (which injects right after the `parameters` cell); locally it falls back
+to `.env`. The notebook also finds `utils/` whether it runs from its own folder (Jupyter) or from the repo root.
 
 **dbt** has no Python function, so `dbt/profiles.yml` reads the same `DB_*` environment variables.
 The file holds no secrets and is committed. dbt picks it up from the project folder.
