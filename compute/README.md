@@ -1,47 +1,115 @@
 # Compute quickstart: lead assignment
 
 A small end-to-end pipeline on ClickHouse that shows the same business problem solved with each tool:
-leads arrive from 3 sources in different formats, get unified, validated, assigned to the
+leads arrive from 3 sources in different formats, get unified, cleaned, assigned to the
 sales person who speaks their language and knows their topic, and finally reported on.
 
-The raw data comes from two origins, and importing it into ClickHouse is part of the exercise:
+The raw data comes from two origins, and importing it into ClickHouse is part of the exercise
+(it is not done by this code):
 
 | Origin | Tables | Created with |
 |--------|--------|--------------|
-| Postgres database | `leads_web_form`, `leads_linkedin`, `sales_people` | [../config/connectors/psql/create_reference_data.sql](../config/connectors/psql/create_reference_data.sql) |
-| Excel file | `leads_trade_fair` | [../reference_data/leads_trade_fair.xlsx](../reference_data/leads_trade_fair.xlsx) |
+| Postgres database | `leads_web_form`, `leads_linkedin`, `sales_people` | [../reference_data/create_reference_data.sql](../reference_data/create_reference_data.sql) (run it once in Postgres, e.g. Neon) |
+| Excel files | `leads_trade_fair` | [leads_trade_fair.xlsx](../reference_data/leads_trade_fair.xlsx) and, optionally, [leads_trade_fair_2.xlsx](../reference_data/leads_trade_fair_2.xlsx) (a second fair, same format) |
 
-The code is in [clickhouse/](clickhouse/) (its own `requirements.txt`, `.env` and README).
+```mermaid
+flowchart LR
+    subgraph raw["Raw tables (imported)"]
+        web[("leads_web_form")]
+        fair[("leads_trade_fair")]
+        li[("leads_linkedin")]
+        sp[("sales_people")]
+    end
 
+    leads[("leads")]
+    clean[("leads_clean")]
+    rejected[("leads_rejected")]
+    assign[("lead_assignments")]
+    stg["stg_* views (dbt)"]
+    mla[("mart_lead_assignments")]
+    msw[("mart_seller_workload")]
+
+    web -->|"1 · 01_unify_leads.sql"| leads
+    fair --> leads
+    li --> leads
+
+    leads -->|"2 · basic_transf.py"| clean
+    leads -->|"2 · basic_transf.py"| rejected
+
+    clean -->|"3 · assign_leads.py / .ipynb"| assign
+    sp --> assign
+
+    clean -->|"4 · dbt build"| stg
+    rejected --> stg
+    sp --> stg
+    assign --> stg
+    stg --> mla
+    stg --> msw
+    mla --> msw
 ```
-Postgres ─┐
-          ├──import──▶ leads_web_form, leads_linkedin, sales_people,   (raw, as at the origin)
-Excel ────┘            leads_trade_fair
-                                    │
-             sql/01_unify_leads.sql ▼
-                               leads                    (unified + normalized)
-                                    │
-     python_ipynb/basic_transf.py   ├──▶ data-quality report
-                                    │
-  python_ipynb/assign_leads.py|ipynb▼
-                               lead_assignments
-                                    │
-                               dbt  ▼
-            mart_lead_assignments, mart_seller_workload
-```
 
-Every table and view lives in one ClickHouse database that must already exist (`DB_NAME`, e.g. `pre_bizdoc`).
-See [clickhouse/README.md](clickhouse/README.md).
+## Where the tables go
+
+ClickHouse has no schemas, so every table and view lives in one **existing** database, `DB_NAME`
+(for example `pre_bizdoc`). Nothing is created at the database level.
+
+| Layer | Tables | Built by |
+|-------|--------|----------|
+| Raw | `leads_web_form`, `leads_linkedin`, `sales_people` | You: import from the Postgres origin |
+| Raw | `leads_trade_fair` | You: import from the trade-fair Excels |
+| Staging | `leads`, `leads_clean`, `leads_rejected`, `lead_assignments`, views `stg_*` | SQL, Python and dbt |
+| Marts | `mart_lead_assignments`, `mart_seller_workload` | dbt |
+
+The pipeline starts from the 4 raw tables, so import them into `DB_NAME` first, with the column names they have at
+the origin (see [Raw tables](#1-raw-tables)). Each step after that drops and recreates its tables, so
+make sure `DB_NAME` has no other tables with these names.
+Your user needs to create, drop, insert into and select from tables and views in `DB_NAME`; it does not need
+`CREATE DATABASE`.
+
+`DB_PORT` is the HTTP port: `8123`, or `8443` for HTTPS (e.g. ClickHouse Cloud), which Python and dbt detect
+automatically. dbt uses `DB_NAME` as its schema, which in ClickHouse is the database.
+
+## How to run
+
+Prerequisites: a ClickHouse database, `clickhouse client` for the SQL step, and the packages in `requirements.txt`
+(dbt needs the **dbt-clickhouse** adapter). Commands run from this folder unless they say otherwise.
+
+```bash
+cd compute
+pip install -r requirements.txt
+cp .env.example .env              # then fill it in (see Credentials)
+set -a; source .env; set +a       # only needed for clickhouse client and dbt
+
+# 1. Import the raw tables into DB_NAME (your ingestion step, not part of this folder):
+#    leads_web_form, leads_linkedin, sales_people from Postgres; leads_trade_fair from the Excels
+
+# 2. Unify the leads into the leads table
+#    clickhouse client uses the native port (9000, or 9440 with --secure), not DB_PORT
+clickhouse client --host $DB_HOST --user $DB_USER --password "$DB_PASSWORD" --database $DB_NAME \
+    --multiquery < sql/01_unify_leads.sql
+
+# 3. Clean the leads into leads_clean + leads_rejected
+python python_ipynb/basic_transf.py               # --dry-run: compute only; --checks: read-only report
+
+# 4. Assign leads to sellers into lead_assignments
+python -m python_ipynb.assign_leads                  # incremental
+python -m python_ipynb.assign_leads --full-refresh   # rebuild everything
+python -m python_ipynb.assign_leads --dry-run        # compute only
+#    ...or run python_ipynb/assign_leads.ipynb top to bottom instead
+
+# 5. dbt: stg_* views, mart_* tables, plus tests
+cd dbt && dbt build
+```
 
 ## Contents
 
-Paths are relative to [clickhouse/](clickhouse/).
+Paths are relative to this folder.
 
 | # | Demo | Files |
 |---|------|-------|
 | 1 | Raw tables | Imported by you from Postgres and Excel (see below) |
 | 2 | SQL | `sql/01_unify_leads.sql` |
-| 3 | Python basic (single file) | `python_ipynb/basic_transf.py` → `run_checks(...)` |
+| 3 | Python basic (single file) | `python_ipynb/basic_transf.py` → `run_cleaning(...)` (and `run_checks(...)` for a read-only report) |
 | 4 | Python complex (package) | `python_ipynb/assign_leads.py` → `run_assignment(...)`, helpers in `python_ipynb/utils/` |
 | 5 | Jupyter | `python_ipynb/assign_leads.ipynb` |
 | 6 | dbt | `dbt/` |
@@ -53,7 +121,7 @@ Import them into `DB_NAME` with the column names they have at the origin; the pi
 | Table | Origin | Rows | Format quirks |
 |-------|--------|-----:|---------------|
 | `leads_web_form` | Postgres | 40 | Full name in one field, language as English name (`Spanish`), interest as label (`BI & Analytics`) |
-| `leads_trade_fair` | Excel | 25 | Spanish headers (`idioma`, `tema_interes`), ISO codes with messy casing (`CA`, `en `), Spanish labels |
+| `leads_trade_fair` | Excel | 25 (+20) | Spanish headers (`idioma`, `tema_interes`), ISO codes with messy casing (`CA`, `en `), Spanish labels. `leads_trade_fair_2.xlsx` adds 20 leads from another fair (`FAIR-026`…`FAIR-045`), loaded into the same table |
 | `leads_linkedin` | Postgres | 35 | Numeric ids, locale codes (`es_ES`), campaign codes (`GENAI`) |
 | `sales_people` | Postgres | 9 | `languages` / `specialties` as `;`-separated lists, capacity (`max_open_leads`), `active` flag (`Yes`/`No`) |
 
@@ -62,19 +130,39 @@ Timestamp columns (`submitted_at`, `fecha_contacto`, `created_ts`) can arrive as
 Canonical values: languages `es, ca, en, fr, de, pt`; contents `data_engineering, bi_analytics,
 machine_learning, genai, data_governance, cloud_platforms`.
 
-Some data-quality issues are injected on purpose, so the checks and the assignment have something to show:
+Some data-quality issues are injected on purpose, so the cleaning and the assignment have something to show:
 
-| Record | Issue |
-|--------|-------|
-| `WEB-0007` | missing e-mail |
-| `WEB-0012` | malformed e-mail (no `.com`) |
-| `FAIR-005` | language `it`: no seller speaks Italian, so the lead ends up unassigned |
-| `FAIR-011` | interest `Blockchain`: not a content we offer, so it maps to NULL |
-| `LI-90003` | same person as `WEB-0003` (cross-source duplicate) |
-| `S08` | inactive seller, who must never get leads |
+| Record | Issue | What the cleaning does |
+|--------|-------|------------------------|
+| `WEB-0007` | missing e-mail | kept in `leads_clean`, flagged `missing_email` |
+| `WEB-0012` | malformed e-mail (no `.com`) | e-mail set to NULL, flagged `invalid_email` |
+| `FAIR-005` | language `it`: no seller speaks Italian | moved to `leads_rejected` (`unsupported_language`) |
+| `FAIR-011` | interest `Blockchain`: not a content we offer, so it maps to NULL | kept, flagged `unknown_content` (gets a language-only match) |
+| `LI-90003` | same person as `WEB-0003` (cross-source duplicate) | merged into the oldest lead, `WEB-0003` (`merged_lead_ids`) |
+| `S08` | inactive seller, who must never get leads | nothing: the assignment skips inactive sellers |
 
-To change the data, edit and re-run `reference_data/generate_reference_data.py` (seeded, so the output is deterministic),
-then regenerate `create_reference_data.sql` from the new Excels.
+To change the data: the Postgres tables are defined in `reference_data/create_reference_data.sql` (edit it directly);
+the trade-fair Excels are written by `reference_data/generate_reference_data.py` (seeded, so the output is deterministic).
+
+### 3. Cleaning rules
+
+`run_cleaning` reads `leads` and replaces two tables: `leads_clean` (input of the assignment) and `leads_rejected`.
+It fixes what can be fixed, flags in `dq_issues` what cannot be fixed but does not block the assignment, and rejects
+what cannot be assigned. It returns (and prints) one row per action taken.
+
+| Problem | Action |
+|---------|--------|
+| `lead_id` missing | rejected (`missing_lead_id`) |
+| `lead_id` repeated | first row kept, the rest dropped |
+| Language not supported | rejected (`unsupported_language`) |
+| E-mail with an invalid format | set to NULL, flagged `invalid_email` |
+| E-mail missing | kept, flagged `missing_email` |
+| Same e-mail in several leads | oldest lead kept; the others are merged into it and listed in `merged_lead_ids` |
+| Content not supported or missing | set to NULL, flagged `unknown_content` |
+| `created_at` in the future | kept, flagged `future_created_at` |
+
+`run_checks` (or `python python_ipynb/basic_transf.py --checks`) still gives the read-only diagnosis of `leads` and
+`sales_people`, without writing anything.
 
 ### 4. Assignment rules
 
@@ -85,7 +173,8 @@ Leads are processed in order of arrival. For each lead:
 
 Within a tier, the seller with the lowest *assigned / capacity* ratio wins (ties go to the lower `seller_id`).
 Each row stores the `match_type` and a human-readable `reason`.
-The process is incremental: only leads not yet in `lead_assignments` are assigned, unless you use `--full-refresh`.
+The process is incremental: only leads of `leads_clean` not yet in `lead_assignments` are assigned, unless
+you use `--full-refresh`.
 
 ```
 python_ipynb/
@@ -100,9 +189,29 @@ python_ipynb/
 ```
 
 **About relative imports.** `assign_leads.py` uses `from .utils...`, so it has to run as a module
-(`python -m python_ipynb.assign_leads`) from `clickhouse/`. A notebook is not part of a package, so
+(`python -m python_ipynb.assign_leads`) from `compute/`. A notebook is not part of a package, so
 `from .utils` fails there. Instead the notebook imports `utils` relative to its own folder, which is the
 Jupyter working directory. Inside `utils/`, the modules still import each other relatively.
+
+### 6. dbt
+
+`dbt build` creates, in `DB_NAME`:
+
+- **`stg_*` views** (staging): one per input table (`stg_leads`, `stg_leads_rejected`, `stg_sales_people`,
+  `stg_lead_assignments`). A view is a saved query, so it stores no data and always shows the current input.
+  They select and type the columns the marts need (e.g. seller languages as arrays).
+- **`mart_lead_assignments`** (table): the final table, one row per lead with its data, its data-quality flags
+  (`dq_issues`, `merged_lead_ids`), its seller and how it was assigned. `match_type` is `full_match`,
+  `language_only`, `unassigned`, `rejected` (set aside by the cleaning, reason in `match_reason`) or `pending`
+  (clean, but not processed by the assignment yet). Leads merged as duplicates appear only in `merged_lead_ids`.
+- **`mart_seller_workload`** (table): one row per seller with assigned leads, match quality and free capacity.
+- **Tests**, e.g. `lead_id` unique and not null, one lead per e-mail, and no seller over capacity
+  (`tests/assert_sellers_within_capacity.sql`).
+
+ClickHouse does not enforce primary keys: `lead_id` / `seller_id` are the sorting keys of the marts, and the dbt
+tests are what guarantee they are unique.
+
+The marts are rebuilt on every run, so they show the current state, not its history.
 
 ## Credentials
 
@@ -111,9 +220,19 @@ Every Python entry point takes a single `creds` argument:
 | Value | When |
 |-------|------|
 | `dict` with keys `DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME` | **In Intelek.** The secret object is injected into the function as a dictionary |
-| `None` (default) | **On your laptop.** Reads the same variables from `clickhouse/.env` |
+| `None` (default) | **On your laptop.** Reads the same variables from `compute/.env` |
 
-**On your laptop:** copy `clickhouse/.env.example` to `.env` (git-ignored) and fill it in. Python loads it
+```python
+creds = {
+    "DB_HOST": "xxxx.eu-central-1.aws.clickhouse.cloud",
+    "DB_PORT": 8443,          # HTTP(S) port: 8443 = HTTPS (e.g. ClickHouse Cloud), 8123 = HTTP
+    "DB_USER": "default",
+    "DB_PASSWORD": "...",
+    "DB_NAME": "pre_bizdoc",  # existing database where every table lives
+}
+```
+
+**On your laptop:** copy `.env.example` to `.env` (git-ignored) and fill it in. Python loads it
 automatically, and its values take precedence over variables with the same name already set in your shell.
 dbt and the SQL client read the same variables from the shell, so load the file first:
 `set -a; source .env; set +a`.
@@ -123,9 +242,9 @@ dbt and the SQL client read the same variables from the shell, so load the file 
 1. Create a secret object with the keys `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` and `DB_NAME`.
 2. Create a Python task that points to the function, and inject the secret as `creds`:
 
-| Task | Function (in `clickhouse/`) | Secret injected as |
-|------|----------------------------------|--------------------|
-| Data-quality checks | `python_ipynb/basic_transf.py` → `run_checks` | `creds` |
+| Task | Function (in `compute/`) | Secret injected as |
+|------|--------------------------|--------------------|
+| Data cleaning | `python_ipynb/basic_transf.py` → `run_cleaning` | `creds` |
 | Lead assignment | `python_ipynb/assign_leads.py` → `run_assignment` | `creds` |
 
 **Notebook.** Intelek runs notebooks with papermill, which injects a cell with the parameters right after
@@ -137,6 +256,9 @@ The file holds no secrets and is committed. dbt picks it up from the project fol
 
 ## Expected result with the bundled data
 
-- **Checks:** 17 checks; 5 report errors (the injected issues) and 2 report warnings (the duplicate pair, and 18 leads with no specialist for their language + topic).
-- **Assignment:** 100 leads, 10 unassigned (`FAIR-005` because nobody speaks Italian, 9 because candidates are at capacity), and S08 gets 0 leads.
-- **dbt:** 3 views + 2 tables + 17 tests, all passing.
+- **Cleaning:** 100 leads → 98 in `leads_clean` (3 flagged), 1 in `leads_rejected` (`FAIR-005`), 1 merged (`LI-90003` into `WEB-0003`).
+- **Assignment:** 98 leads, 8 unassigned (candidates at capacity), and S08 gets 0 leads.
+- **dbt:** 4 views + 2 tables + 22 tests, all passing. `mart_lead_assignments` has the 99 leads: 69 `full_match`, 21 `language_only`, 8 `unassigned`, 1 `rejected`.
+
+With `leads_trade_fair_2.xlsx` also loaded into `leads_trade_fair`: 120 leads → 118 clean, 1 rejected, 1 merged;
+22 unassigned.

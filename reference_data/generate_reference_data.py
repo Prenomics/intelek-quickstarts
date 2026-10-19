@@ -8,6 +8,8 @@ so the SQL step has something real to normalize:
                              interest as a dropdown label.
     leads_trade_fair.xlsx -> Spanish headers, language as ISO code (messy casing),
                              interest as a Spanish label.
+    leads_trade_fair_2.xlsx -> same format, different leads from another trade fair
+                             (ids continue after the first file, so both can share a table).
     leads_linkedin.xlsx   -> snake_case headers, language as locale (es_ES),
                              interest as a campaign code.
     sales_people.xlsx     -> one row per seller, languages / specialties as ';' lists.
@@ -16,7 +18,7 @@ A few data-quality issues are injected on purpose (see INJECTED_ISSUES) so the
 validation script (python_ipynb/basic_transf.py) has something to report.
 
 Usage:
-    python generate_reference_data.py            # writes the .xlsx files next to this script
+    python generate_reference_data.py            # writes the trade-fair .xlsx files next to this script
 """
 
 import random
@@ -71,6 +73,7 @@ COMPANIES = ["Acme Retail", "Nordic Foods", "Iberia Logistics", "BlueWave Energy
 JOB_TITLES = ["CDO", "Head of Data", "BI Manager", "CTO", "Data Engineer",
               "Analytics Lead", "IT Director", "Head of Innovation"]
 FAIRS = ["Big Data & AI World Madrid", "Barcelona Digital Talent", "Data Innovation Summit"]
+FAIRS_2 = ["Valencia Data & Cloud Expo"]   # the second trade-fair file comes from another fair
 
 # Language weights: most leads speak es/en/ca, a few the rest
 LANG_WEIGHTS = [0.30, 0.15, 0.25, 0.12, 0.10, 0.08]
@@ -134,9 +137,11 @@ def build_web_form(rng: random.Random, n: int = 40) -> pd.DataFrame:
     return df
 
 
-def build_trade_fair(rng: random.Random, n: int = 25) -> pd.DataFrame:
+def build_trade_fair(rng: random.Random, n: int = 25, first_id: int = 1, fairs: list = FAIRS,
+                     start: datetime = datetime(2026, 9, 15), days: int = 20,
+                     inject_issues: bool = True) -> pd.DataFrame:
     rows = []
-    for i in range(1, n + 1):
+    for i in range(first_id, first_id + n):
         lang = rng.choices(LANGUAGES, LANG_WEIGHTS)[0]
         content = rng.choice(CONTENTS)
         p = _person(rng, lang)
@@ -149,12 +154,13 @@ def build_trade_fair(rng: random.Random, n: int = 25) -> pd.DataFrame:
             "pais": p["country"],
             "idioma": FAIR_LANGUAGE[lang],
             "tema_interes": FAIR_CONTENT[content],
-            "feria": rng.choice(FAIRS),
-            "fecha_contacto": _random_ts(rng, datetime(2026, 9, 15), 20).date(),
+            "feria": rng.choice(fairs),
+            "fecha_contacto": _random_ts(rng, start, days).date(),
         })
     df = pd.DataFrame(rows)
-    df.loc[df["id_contacto"] == "FAIR-005", "idioma"] = "it"
-    df.loc[df["id_contacto"] == "FAIR-011", "tema_interes"] = "Blockchain"
+    if inject_issues:
+        df.loc[df["id_contacto"] == "FAIR-005", "idioma"] = "it"
+        df.loc[df["id_contacto"] == "FAIR-011", "tema_interes"] = "Blockchain"
     return df
 
 
@@ -206,8 +212,15 @@ def build_sales_people() -> pd.DataFrame:
     return df
 
 
+# Only the trade-fair leads have an Excel origin; the other datasets live in the Postgres
+# origin (create_reference_data.sql). They are still built here, in the same order, so the
+# random draws stay the same and the cross-source duplicate keeps pointing to WEB-0003.
+EXCEL_FILES = {"leads_trade_fair.xlsx", "leads_trade_fair_2.xlsx"}
+
+
 def generate(output_dir: Path = OUTPUT_DIR, seed: int = SEED) -> dict:
-    """Build all reference datasets and write them as .xlsx. Returns {file_name: DataFrame}."""
+    """Build all reference datasets and write the Excel-origin ones (EXCEL_FILES) as .xlsx.
+    Returns {file_name: DataFrame} with every dataset."""
     rng = random.Random(seed)
     _USED_EMAILS.clear()
     web = build_web_form(rng)
@@ -216,9 +229,14 @@ def generate(output_dir: Path = OUTPUT_DIR, seed: int = SEED) -> dict:
         "leads_trade_fair.xlsx": build_trade_fair(rng),
         "leads_linkedin.xlsx": build_linkedin(rng, web),
         "sales_people.xlsx": build_sales_people(),
+        # Built last so the random draws of the files above do not change
+        "leads_trade_fair_2.xlsx": build_trade_fair(rng, n=20, first_id=26, fairs=FAIRS_2,
+                                                    start=datetime(2026, 10, 6), days=8,
+                                                    inject_issues=False),
     }
     output_dir.mkdir(parents=True, exist_ok=True)
-    for file_name, df in datasets.items():
+    for file_name in sorted(EXCEL_FILES):
+        df = datasets[file_name]
         df.to_excel(output_dir / file_name, index=False, sheet_name="data")
         print(f"{file_name:<24} {len(df):>3} rows")
     print("Injected data-quality issues:" + INJECTED_ISSUES)

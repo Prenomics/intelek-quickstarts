@@ -8,7 +8,7 @@ import pandas as pd
 from clickhouse_connect.driver.client import Client
 from dotenv import load_dotenv
 
-# Local runs: compute/clickhouse/.env (git-ignored), see .env.example next to it
+# Local runs: compute/.env (git-ignored), see .env.example next to it
 ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 # Keys of the Intelek secret object, and names of the variables in .env
@@ -21,7 +21,7 @@ def load_creds(creds=None) -> dict:
 
     creds can be:
         - a dict:  the secret object Intelek injects into the function, used as-is
-        - None:    read the same variables from compute/clickhouse/.env (local runs)
+        - None:    read the same variables from compute/.env (local runs)
     """
     if creds is not None:
         return creds

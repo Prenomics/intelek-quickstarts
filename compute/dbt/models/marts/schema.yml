@@ -2,17 +2,17 @@ version: 2
 
 models:
   - name: mart_lead_assignments
-    description: "One row per lead, enriched with the assigned seller and the match quality"
+    description: "One row per lead (clean and rejected), enriched with the assigned seller, the match quality and the data-quality flags"
     columns:
       - name: lead_id
         data_tests: [unique, not_null]
       - name: match_type
-        description: "full_match | language_only | unassigned | pending (not processed yet)"
+        description: "full_match | language_only | unassigned | pending (not processed yet) | rejected (by the cleaning step)"
         data_tests:
           - not_null
           - accepted_values:
               arguments:
-                values: ['full_match', 'language_only', 'unassigned', 'pending']
+                values: ['full_match', 'language_only', 'unassigned', 'pending', 'rejected']
 
   - name: mart_seller_workload
     description: "One row per seller with assigned leads, match quality and remaining capacity"

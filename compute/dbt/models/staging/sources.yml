@@ -13,7 +13,9 @@ sources:
     description: "Tables built outside dbt by the SQL and Python steps of the demo"
     schema: "{{ env_var('DB_NAME') }}"
     tables:
-      - name: leads
-        description: "Unified and normalized leads from the 3 sources (sql/01_unify_leads.sql)"
+      - name: leads_clean
+        description: "Unified leads after cleaning: fixes applied, duplicates merged, dq_issues flags (python_ipynb/basic_transf.py)"
+      - name: leads_rejected
+        description: "Leads that cannot be assigned, with rejection_reason (python_ipynb/basic_transf.py)"
       - name: lead_assignments
         description: "Lead -> seller assignments (python_ipynb/assign_leads.py)"

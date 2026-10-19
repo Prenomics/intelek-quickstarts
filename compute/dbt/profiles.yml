@@ -1,6 +1,6 @@
 # dbt reads this file from the project folder (no need to copy it to ~/.dbt).
 # It holds no secrets: every value comes from an environment variable.
-#   Locally:  load compute/clickhouse/.env into your shell (see compute/clickhouse/README.md)
+#   Locally:  load compute/.env into your shell (see compute/README.md)
 #   Intelek:  expose the secret object keys as environment variables (same names)
 intelek_quickstart_clickhouse:
   target: dev

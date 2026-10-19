@@ -2,15 +2,18 @@
 Assign new leads to sales people and materialize the result in ClickHouse.
 
 Pipeline:
-    leads  +  sales_people  ->  lead_assignments        (tables of the DB_NAME database)
+    leads_clean  +  sales_people  ->  lead_assignments        (tables of the DB_NAME database)
+
+leads_clean is written by basic_transf.py (run_cleaning): leads already deduplicated and
+validated; the ones that cannot be assigned are in leads_rejected and never reach this step.
 
 "New" leads are the ones not yet present in the output table, so the script can
 be re-run incrementally; use full_refresh=True to rebuild every assignment.
 
 This file uses *relative imports*, so it must be run as a module from the
-compute/clickhouse folder (the parent of the python_ipynb package):
+compute folder (the parent of the python_ipynb package):
 
-    cd compute/clickhouse
+    cd compute
     python -m python_ipynb.assign_leads                      # credentials from .env
     python -m python_ipynb.assign_leads --full-refresh
     python -m python_ipynb.assign_leads --dry-run
@@ -30,7 +33,7 @@ import pandas as pd
 from .utils.db import get_client, read_table, table_exists, write_table
 from .utils.matching import assign_leads, current_load, normalize_sellers, summarize
 
-LEADS_TABLE = "leads"
+LEADS_TABLE = "leads_clean"
 SELLERS_TABLE = "sales_people"
 OUTPUT_TABLE = "lead_assignments"
 

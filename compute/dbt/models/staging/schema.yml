@@ -10,10 +10,26 @@ models:
         data_tests: [not_null]
 
   - name: stg_leads
-    description: "Unified leads (one row per lead)"
+    description: "Clean leads (one row per lead, one lead per e-mail)"
     columns:
       - name: lead_id
         data_tests: [unique, not_null]
+      - name: email
+        data_tests: [unique]
+      - name: preferred_language
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['es', 'ca', 'en', 'fr', 'de', 'pt']
+
+  - name: stg_leads_rejected
+    description: "Leads that cannot be assigned, with the reason"
+    columns:
+      - name: lead_id
+        data_tests: [unique]
+      - name: rejection_reason
+        data_tests: [not_null]
 
   - name: stg_lead_assignments
     description: "Lead -> seller assignments produced by the Python step"
