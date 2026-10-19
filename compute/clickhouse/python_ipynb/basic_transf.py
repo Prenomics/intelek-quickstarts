@@ -41,11 +41,6 @@ VALID_CONTENTS = {"data_engineering", "bi_analytics", "machine_learning",
                   "genai", "data_governance", "cloud_platforms"}
 EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[a-z]{2,}$", re.IGNORECASE)
 
-# Raw Excel headers -> normalized names
-SELLER_COLUMNS = {"Seller ID": "seller_id", "Full Name": "full_name", "Email": "email",
-                  "Languages": "languages", "Specialties": "specialties",
-                  "Max Open Leads": "max_open_leads", "Active": "active"}
-
 
 # ---------------------------------------------------------------------------
 # Data access
@@ -193,7 +188,6 @@ def run_checks(creds=None,
     """
     leads = leads_df if leads_df is not None else read_table(creds, leads_table)
     sellers = sellers_df if sellers_df is not None else read_table(creds, sellers_table)
-    sellers = sellers.rename(columns=SELLER_COLUMNS)
 
     report = pd.DataFrame(
         check_leads(leads, leads_table)

@@ -1,23 +1,22 @@
 # Compute quickstart: lead assignment
 
-A small end-to-end pipeline that shows the same business problem solved with each tool:
+A small end-to-end pipeline on ClickHouse that shows the same business problem solved with each tool:
 leads arrive from 3 sources in different formats, get unified, validated, assigned to the
 sales person who speaks their language and knows their topic, and finally reported on.
 
-**Pick your database:**
+The raw data comes from two origins, and importing it into ClickHouse is part of the exercise:
 
-| Engine | Folder |
-|--------|--------|
-| PostgreSQL | [postgres/](postgres/) |
-| ClickHouse | [clickhouse/](clickhouse/) |
+| Origin | Tables | Created with |
+|--------|--------|--------------|
+| Postgres database | `leads_web_form`, `leads_linkedin`, `sales_people` | [../config/connectors/psql/create_reference_data.sql](../config/connectors/psql/create_reference_data.sql) |
+| Excel file | `leads_trade_fair` | [../reference_data/leads_trade_fair.xlsx](../reference_data/leads_trade_fair.xlsx) |
 
-Each folder is self-contained (its own code, `requirements.txt`, `.env` and README) and has the same structure,
-so `diff -r postgres clickhouse` shows only what changes between engines. The sample data in
-[../reference_data/](../reference_data/) is shared.
+The code is in [clickhouse/](clickhouse/) (its own `requirements.txt`, `.env` and README).
 
 ```
-reference_data/*.xlsx ──load──▶ leads_web_form, leads_trade_fair,      (Excels as-is)
-                                leads_linkedin, sales_people
+Postgres ─┐
+          ├──import──▶ leads_web_form, leads_linkedin, sales_people,   (raw, as at the origin)
+Excel ────┘            leads_trade_fair
                                     │
              sql/01_unify_leads.sql ▼
                                leads                    (unified + normalized)
@@ -31,30 +30,34 @@ reference_data/*.xlsx ──load──▶ leads_web_form, leads_trade_fair,     
             mart_lead_assignments, mart_seller_workload
 ```
 
-Both engines put every table and view in one place that must already exist: a schema in Postgres (`DB_SCHEMA`,
-e.g. `bizdoc`), a database in ClickHouse (`DB_NAME`, e.g. `pre_bizdoc`). See each folder's README.
+Every table and view lives in one ClickHouse database that must already exist (`DB_NAME`, e.g. `pre_bizdoc`).
+See [clickhouse/README.md](clickhouse/README.md).
 
 ## Contents
 
-Paths are relative to the engine folder.
+Paths are relative to [clickhouse/](clickhouse/).
 
 | # | Demo | Files |
 |---|------|-------|
-| 1 | Reference data | `../../reference_data/*.xlsx` (built by `generate_reference_data.py`), loader `load_reference_data.py` |
+| 1 | Raw tables | Imported by you from Postgres and Excel (see below) |
 | 2 | SQL | `sql/01_unify_leads.sql` |
 | 3 | Python basic (single file) | `python_ipynb/basic_transf.py` → `run_checks(...)` |
 | 4 | Python complex (package) | `python_ipynb/assign_leads.py` → `run_assignment(...)`, helpers in `python_ipynb/utils/` |
 | 5 | Jupyter | `python_ipynb/assign_leads.ipynb` |
 | 6 | dbt | `dbt/` |
 
-### 1. Reference data
+### 1. Raw tables
 
-| File | Rows | Format quirks |
-|------|-----:|---------------|
-| `leads_web_form.xlsx` | 40 | Headers with spaces (`"Lead ID"`), language as English name (`Spanish`), interest as label (`BI & Analytics`) |
-| `leads_trade_fair.xlsx` | 25 | Spanish headers (`idioma`, `tema_interes`), ISO codes with messy casing (`CA`, `en `), Spanish labels |
-| `leads_linkedin.xlsx` | 35 | Numeric ids, locale codes (`es_ES`), campaign codes (`GENAI`) |
-| `sales_people.xlsx` | 9 | `Languages` / `Specialties` as `;`-separated lists, capacity (`Max Open Leads`), `Active` flag |
+Import them into `DB_NAME` with the column names they have at the origin; the pipeline reads those names.
+
+| Table | Origin | Rows | Format quirks |
+|-------|--------|-----:|---------------|
+| `leads_web_form` | Postgres | 40 | Full name in one field, language as English name (`Spanish`), interest as label (`BI & Analytics`) |
+| `leads_trade_fair` | Excel | 25 | Spanish headers (`idioma`, `tema_interes`), ISO codes with messy casing (`CA`, `en `), Spanish labels |
+| `leads_linkedin` | Postgres | 35 | Numeric ids, locale codes (`es_ES`), campaign codes (`GENAI`) |
+| `sales_people` | Postgres | 9 | `languages` / `specialties` as `;`-separated lists, capacity (`max_open_leads`), `active` flag (`Yes`/`No`) |
+
+Timestamp columns (`submitted_at`, `fecha_contacto`, `created_ts`) can arrive as `DateTime`, `DateTime64` or text.
 
 Canonical values: languages `es, ca, en, fr, de, pt`; contents `data_engineering, bi_analytics,
 machine_learning, genai, data_governance, cloud_platforms`.
@@ -70,7 +73,8 @@ Some data-quality issues are injected on purpose, so the checks and the assignme
 | `LI-90003` | same person as `WEB-0003` (cross-source duplicate) |
 | `S08` | inactive seller, who must never get leads |
 
-To change the data, edit and re-run `reference_data/generate_reference_data.py` (seeded, so the output is deterministic).
+To change the data, edit and re-run `reference_data/generate_reference_data.py` (seeded, so the output is deterministic),
+then regenerate `create_reference_data.sql` from the new Excels.
 
 ### 4. Assignment rules
 
@@ -88,7 +92,7 @@ python_ipynb/
 ├── assign_leads.py          # main: run_assignment() + CLI, uses relative imports (from .utils...)
 ├── assign_leads.ipynb       # same flow as a notebook
 └── utils/
-    ├── db.py                # connection + read/write tables (the only engine-specific module)
+    ├── db.py                # connection + read/write tables (the only ClickHouse-specific module)
     └── matching/
         ├── sellers.py       # normalize the raw sellers table
         ├── candidates.py    # candidate tiers + least-loaded pick
@@ -96,7 +100,7 @@ python_ipynb/
 ```
 
 **About relative imports.** `assign_leads.py` uses `from .utils...`, so it has to run as a module
-(`python -m python_ipynb.assign_leads`) from the engine folder. A notebook is not part of a package, so
+(`python -m python_ipynb.assign_leads`) from `clickhouse/`. A notebook is not part of a package, so
 `from .utils` fails there. Instead the notebook imports `utils` relative to its own folder, which is the
 Jupyter working directory. Inside `utils/`, the modules still import each other relatively.
 
@@ -106,23 +110,21 @@ Every Python entry point takes a single `creds` argument:
 
 | Value | When |
 |-------|------|
-| `dict` with keys `DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME` (+ `DB_SCHEMA` on Postgres) | **In Intelek.** The secret object is injected into the function as a dictionary |
-| `None` (default) | **On your laptop.** Reads the same variables from the `.env` file in the engine folder |
+| `dict` with keys `DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME` | **In Intelek.** The secret object is injected into the function as a dictionary |
+| `None` (default) | **On your laptop.** Reads the same variables from `clickhouse/.env` |
 
-**On your laptop:** copy the engine folder's `.env.example` to `.env` (git-ignored) and fill it in. Python loads it
+**On your laptop:** copy `clickhouse/.env.example` to `.env` (git-ignored) and fill it in. Python loads it
 automatically, and its values take precedence over variables with the same name already set in your shell.
 dbt and the SQL client read the same variables from the shell, so load the file first:
 `set -a; source .env; set +a`.
 
 **In Intelek:**
 
-1. Create a secret object with the keys `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` and `DB_NAME`
-   (on Postgres, also `DB_SCHEMA`).
+1. Create a secret object with the keys `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` and `DB_NAME`.
 2. Create a Python task that points to the function, and inject the secret as `creds`:
 
-| Task | Function (in the engine folder) | Secret injected as |
+| Task | Function (in `clickhouse/`) | Secret injected as |
 |------|----------------------------------|--------------------|
-| Load reference data | `load_reference_data.py` → `load_reference_data` | `creds` |
 | Data-quality checks | `python_ipynb/basic_transf.py` → `run_checks` | `creds` |
 | Lead assignment | `python_ipynb/assign_leads.py` → `run_assignment` | `creds` |
 
@@ -134,8 +136,6 @@ names, flags). The database connection is opened in the next cell, so it uses th
 The file holds no secrets and is committed. dbt picks it up from the project folder.
 
 ## Expected result with the bundled data
-
-The same on every engine:
 
 - **Checks:** 17 checks; 5 report errors (the injected issues) and 2 report warnings (the duplicate pair, and 18 leads with no specialist for their language + topic).
 - **Assignment:** 100 leads, 10 unassigned (`FAIR-005` because nobody speaks Italian, 9 because candidates are at capacity), and S08 gets 0 leads.

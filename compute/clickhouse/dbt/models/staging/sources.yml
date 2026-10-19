@@ -3,11 +3,11 @@ version: 2
 # Both sources are tables of the DB_NAME database (in ClickHouse, schema = database)
 sources:
   - name: raw
-    description: "Reference Excels loaded as-is (load_reference_data.py)"
+    description: "Raw tables imported into DB_NAME before the pipeline runs (from Postgres and Excel)"
     schema: "{{ env_var('DB_NAME') }}"
     tables:
       - name: sales_people
-        description: "Sales people: languages and specialties as ';'-separated lists"
+        description: "Sales people (from Postgres): languages and specialties as ';'-separated lists"
 
   - name: pipeline
     description: "Tables built outside dbt by the SQL and Python steps of the demo"

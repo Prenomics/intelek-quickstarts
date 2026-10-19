@@ -10,11 +10,14 @@ ClickHouse has no schemas, so every table and view lives in one **existing** dat
 
 | Layer | Tables | Built by |
 |-------|--------|----------|
-| Raw | `leads_web_form`, `leads_trade_fair`, `leads_linkedin`, `sales_people` | `load_reference_data.py` |
+| Raw | `leads_web_form`, `leads_linkedin`, `sales_people` | You: import from the Postgres origin |
+| Raw | `leads_trade_fair` | You: import from `reference_data/leads_trade_fair.xlsx` |
 | Staging | `leads`, `lead_assignments`, views `stg_*` | SQL, Python and dbt |
 | Marts | `mart_lead_assignments`, `mart_seller_workload` | dbt |
 
-Each step drops and recreates its tables, so make sure `DB_NAME` has no other tables with these names.
+The pipeline starts from the 4 raw tables, so import them into `DB_NAME` first, with the column names they have at
+the origin (see [Raw tables](../README.md#1-raw-tables)). Each step after that drops and recreates its tables, so
+make sure `DB_NAME` has no other tables with these names.
 Your user needs to create, drop, insert into and select from tables and views in `DB_NAME`; it does not need
 `CREATE DATABASE`.
 
@@ -32,8 +35,8 @@ pip install -r requirements.txt
 cp .env.example .env              # then fill it in
 set -a; source .env; set +a       # only needed for clickhouse client and dbt
 
-# 1. Load the Excels into DB_NAME
-python load_reference_data.py                     # or only some: python load_reference_data.py sales_people.xlsx
+# 1. Import the raw tables into DB_NAME (your ingestion step, not part of this folder):
+#    leads_web_form, leads_linkedin, sales_people from Postgres; leads_trade_fair from the Excel
 
 # 2. Unify the leads into the leads table
 #    clickhouse client uses the native port (9000, or 9440 with --secure), not DB_PORT

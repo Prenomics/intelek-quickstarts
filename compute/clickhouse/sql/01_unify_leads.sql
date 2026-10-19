@@ -3,10 +3,13 @@
  Unify the 3 lead sources into a single, normalized table: leads
  (ClickHouse; every table lives in the DB_NAME database)
 
- Input  (Excels loaded as-is, see load_reference_data.py):
-   leads_web_form    -> "Lead ID", "Full Name", "E-mail", "Preferred Language" (English name) ...
-   leads_trade_fair  -> id_contacto, nombre, apellidos, correo, idioma (ISO code) ...
-   leads_linkedin    -> linkedin_lead_id, first_name, email_address, lang (locale) ...
+ Input  (raw tables imported into DB_NAME beforehand, values as they come from the origin):
+   leads_web_form    -> lead_id, full_name, email, preferred_language (English name) ...  [Postgres]
+   leads_trade_fair  -> id_contacto, nombre, apellidos, correo, idioma (ISO code) ...    [Excel]
+   leads_linkedin    -> linkedin_lead_id, first_name, email_address, lang (locale) ...   [Postgres]
+
+   Timestamps are parsed from their text form, so the columns may arrive as DateTime,
+   DateTime64 or String depending on the import tool: the wall-clock value is kept.
 
  Output:
    leads -> one row per lead, snake_case English column names and
@@ -54,21 +57,21 @@ INSERT INTO leads (
 )
 
 -- ---------------------------------------------------------------------------
--- 1) Web form: English headers with spaces -> must be quoted
+-- 1) Web form: full name in one field, language as English name
 -- ---------------------------------------------------------------------------
 SELECT
-    w."Lead ID"                                                AS lead_id,
+    toString(w.lead_id)                                        AS lead_id,
     'web_form'                                                 AS source_system,
-    w."Lead ID"                                                AS source_lead_id,
-    splitByChar(' ', trimBoth(assumeNotNull(w."Full Name")))[1] AS first_name,
-    nullIf(replaceRegexpOne(trimBoth(w."Full Name"), '^\\S+\\s*', ''), '') AS last_name,
-    trimBoth(w."Full Name")                                    AS full_name,
-    lowerUTF8(trimBoth(w."E-mail"))                            AS email,
-    trimBoth(w."Company")                                      AS company_name,
-    trimBoth(w."Country")                                      AS country,
+    toString(w.lead_id)                                        AS source_lead_id,
+    splitByChar(' ', trimBoth(assumeNotNull(w.full_name)))[1]  AS first_name,
+    nullIf(replaceRegexpOne(trimBoth(w.full_name), '^\\S+\\s*', ''), '') AS last_name,
+    trimBoth(w.full_name)                                      AS full_name,
+    lowerUTF8(trimBoth(w.email))                               AS email,
+    trimBoth(w.company)                                        AS company_name,
+    trimBoth(w.country)                                        AS country,
     NULL                                                       AS job_title,
     NULL                                                       AS event_name,
-    CASE lowerUTF8(trimBoth(w."Preferred Language"))
+    CASE lowerUTF8(trimBoth(w.preferred_language))
         WHEN 'spanish'    THEN 'es'
         WHEN 'catalan'    THEN 'ca'
         WHEN 'english'    THEN 'en'
@@ -76,8 +79,8 @@ SELECT
         WHEN 'german'     THEN 'de'
         WHEN 'portuguese' THEN 'pt'
     END                                                        AS preferred_language,
-    w."Preferred Language"                                     AS preferred_language_raw,
-    CASE trimBoth(w."Interest")
+    w.preferred_language                                       AS preferred_language_raw,
+    CASE trimBoth(w.interest)
         WHEN 'Data Engineering' THEN 'data_engineering'
         WHEN 'BI & Analytics'   THEN 'bi_analytics'
         WHEN 'Machine Learning' THEN 'machine_learning'
@@ -85,8 +88,8 @@ SELECT
         WHEN 'Data Governance'  THEN 'data_governance'
         WHEN 'Cloud Platforms'  THEN 'cloud_platforms'
     END                                                        AS content_of_interest,
-    w."Interest"                                               AS content_of_interest_raw,
-    w."Submitted At"                                           AS created_at
+    w.interest                                                 AS content_of_interest_raw,
+    parseDateTime64BestEffortOrNull(toString(w.submitted_at), 3, 'UTC') AS created_at
 FROM leads_web_form w
 
 UNION ALL
@@ -95,9 +98,9 @@ UNION ALL
 -- 2) Trade fair: Spanish headers, ISO language codes with messy casing/spaces
 -- ---------------------------------------------------------------------------
 SELECT
-    f.id_contacto                                              AS lead_id,
+    toString(f.id_contacto)                                    AS lead_id,
     'trade_fair'                                               AS source_system,
-    f.id_contacto                                              AS source_lead_id,
+    toString(f.id_contacto)                                    AS source_lead_id,
     trimBoth(f.nombre)                                         AS first_name,
     trimBoth(f.apellidos)                                      AS last_name,
     trimBoth(f.nombre) || ' ' || trimBoth(f.apellidos)         AS full_name,
@@ -117,7 +120,7 @@ SELECT
         WHEN 'cloud'               THEN 'cloud_platforms'
     END                                                        AS content_of_interest,
     f.tema_interes                                             AS content_of_interest_raw,
-    f.fecha_contacto                                           AS created_at
+    parseDateTime64BestEffortOrNull(toString(f.fecha_contacto), 3, 'UTC') AS created_at
 FROM leads_trade_fair f
 
 UNION ALL
@@ -155,7 +158,7 @@ SELECT
         WHEN 'CLOUD' THEN 'cloud_platforms'
     END                                                        AS content_of_interest,
     l.campaign_topic                                           AS content_of_interest_raw,
-    l.created_ts                                               AS created_at
+    parseDateTime64BestEffortOrNull(toString(l.created_ts), 3, 'UTC') AS created_at
 FROM leads_linkedin l;
 
 -- Quick sanity check: rows per source and unmapped values
