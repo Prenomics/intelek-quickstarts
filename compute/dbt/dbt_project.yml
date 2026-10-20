@@ -2,9 +2,12 @@
 # Demo dbt project: builds reporting tables on top of the lead-assignment pipeline.
 # Everything lives in the DB_NAME database (ClickHouse):
 #
-#   sales_people       (Excel, as-is)                  \
-#   leads              (sql/01_unify_leads.sql)         >-- staging views (stg_*) --> marts (mart_*)
+#   sales_people       (raw, imported from Postgres)   \
+#   leads_clean        (python_ipynb/basic_transf.py)   \
+#   leads_rejected     (python_ipynb/basic_transf.py)   /-- staging views (stg_*) --> marts (mart_*)
 #   lead_assignments   (python_ipynb/assign_leads.py)  /
+#
+# sql/04_consolidate_leads_and_sales.sql builds the same objects in plain SQL, without dbt.
 name: 'intelek_quickstart'
 version: '1.0.0'
 

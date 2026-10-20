@@ -8,3 +8,6 @@ __pycache__/
 
 # Excel lock files
 ~$*
+
+# macOS Finder metadata
+.DS_Store

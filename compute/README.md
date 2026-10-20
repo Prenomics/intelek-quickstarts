@@ -39,7 +39,7 @@ flowchart LR
     clean -->|"3 · assign_leads.py / .ipynb"| assign
     sp --> assign
 
-    clean -->|"4 · dbt build"| stg
+    clean -->|"4 · dbt build (or 04_consolidate_leads_and_sales.sql)"| stg
     rejected --> stg
     sp --> stg
     assign --> stg
@@ -96,9 +96,15 @@ python -m python_ipynb.assign_leads                  # incremental
 python -m python_ipynb.assign_leads --full-refresh   # rebuild everything
 python -m python_ipynb.assign_leads --dry-run        # compute only
 #    ...or run python_ipynb/assign_leads.ipynb top to bottom instead
+#    (or python_ipynb/assign_leads_standalone.ipynb, which needs no utils/ and runs from any folder)
 
 # 5. dbt: stg_* views, mart_* tables, plus tests
 cd dbt && dbt build
+#    (from another folder: python -m dbt.cli.main build --project-dir compute/dbt --profiles-dir compute/dbt)
+
+# 5'. ...or the same without dbt, in plain SQL (last query = the dbt tests, all should be 0)
+clickhouse client --host $DB_HOST --user $DB_USER --password "$DB_PASSWORD" --database $DB_NAME \
+    --multiquery < sql/04_consolidate_leads_and_sales.sql
 ```
 
 ## Contents
@@ -109,10 +115,10 @@ Paths are relative to this folder.
 |---|------|-------|
 | 1 | Raw tables | Imported by you from Postgres and Excel (see below) |
 | 2 | SQL | `sql/01_unify_leads.sql` |
-| 3 | Python basic (single file) | `python_ipynb/basic_transf.py` → `run_cleaning(...)` (and `run_checks(...)` for a read-only report) |
+| 3 | Python basic (single file) | `python_ipynb/basic_transf.py` → `run_cleaning(...)` (and `run_checks(...)` for a read-only report). Self-contained: it imports nothing from `utils/` |
 | 4 | Python complex (package) | `python_ipynb/assign_leads.py` → `run_assignment(...)`, helpers in `python_ipynb/utils/` |
-| 5 | Jupyter | `python_ipynb/assign_leads.ipynb` |
-| 6 | dbt | `dbt/` |
+| 5 | Jupyter | `python_ipynb/assign_leads.ipynb` (imports `utils/`), or `python_ipynb/assign_leads_standalone.ipynb` (same flow and result, with the `utils/` code inside the notebook) |
+| 6 | dbt | `dbt/`, or its plain-SQL alternative `sql/04_consolidate_leads_and_sales.sql` |
 
 ### 1. Raw tables
 
@@ -179,7 +185,8 @@ you use `--full-refresh`.
 ```
 python_ipynb/
 ├── assign_leads.py          # main: run_assignment() + CLI, uses relative imports (from .utils...)
-├── assign_leads.ipynb       # same flow as a notebook
+├── assign_leads.ipynb       # same flow as a notebook (imports utils/)
+├── assign_leads_standalone.ipynb  # same notebook with the utils/ code inlined: no local imports
 └── utils/
     ├── db.py                # connection + read/write tables (the only ClickHouse-specific module)
     └── matching/
@@ -193,9 +200,10 @@ python_ipynb/
 `from .utils` fails there. Instead the notebook imports `utils` relative to its own folder, which is the
 Jupyter working directory. Inside `utils/`, the modules still import each other relatively.
 
-### 6. dbt
+### 6. dbt (or plain SQL)
 
-`dbt build` creates, in `DB_NAME`:
+`dbt build`, or `sql/04_consolidate_leads_and_sales.sql` if you prefer not to use dbt, creates in `DB_NAME`
+(same names, same logic and same result with either; run one of them):
 
 - **`stg_*` views** (staging): one per input table (`stg_leads`, `stg_leads_rejected`, `stg_sales_people`,
   `stg_lead_assignments`). A view is a saved query, so it stores no data and always shows the current input.
@@ -206,7 +214,8 @@ Jupyter working directory. Inside `utils/`, the modules still import each other 
   (clean, but not processed by the assignment yet). Leads merged as duplicates appear only in `merged_lead_ids`.
 - **`mart_seller_workload`** (table): one row per seller with assigned leads, match quality and free capacity.
 - **Tests**, e.g. `lead_id` unique and not null, one lead per e-mail, and no seller over capacity
-  (`tests/assert_sellers_within_capacity.sql`).
+  (`tests/assert_sellers_within_capacity.sql`). dbt fails the build if one fails; the SQL script instead ends
+  with a query that returns one row per test with its failing rows (all should be 0).
 
 ClickHouse does not enforce primary keys: `lead_id` / `seller_id` are the sorting keys of the marts, and the dbt
 tests are what guarantee they are unique.
