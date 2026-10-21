@@ -50,6 +50,38 @@ flowchart LR
     mla --> msw
 ```
 
+## About this demo
+
+This is a teaching example, built to look like a real project while staying small and easy to follow.
+Keep in mind:
+
+**The data is synthetic.**
+- Every lead and seller is made up by `reference_data/generate_reference_data.py` (seeded, so always the same).
+  Names, companies and e-mails are fictitious; seller e-mails use the `prenomics-demo.com` domain.
+- Some data-quality issues are injected on purpose (see [Raw tables](#1-raw-tables)) so the cleaning step has
+  something to fix.
+- The Postgres database and the Excel files play the role of a client's source systems.
+
+**Some things are done more than once, on purpose,** to show the same step with different tools:
+- The reporting layer exists both as a dbt project and as a plain-SQL script (`sql/04_...`).
+- The assignment exists as a Python package (`assign_leads.py` + `utils/`), as a notebook that imports it, and as a
+  standalone notebook with the code copied in.
+
+A real project would pick one of each and maintain only that.
+
+**Some steps are simplified or faked, and would not hold in production:**
+
+| Demo behaviour | In a real project |
+|----------------|-------------------|
+| The commercial statuses (`contacted`, `interested`, `converted`) are faked by dbt on every run (`seed_demo_status`) | Only the business app writes `lead_status`; turn the seed off with `--vars '{seed_demo_status: false}'` |
+| Leads are never closed, so a seller's load only grows and capacity eventually runs out | Count only open leads (e.g. not yet `converted` or lost) against capacity |
+| `assigned_at` is the time of the batch run, and `--full-refresh` reassigns every lead | Keep the original assignment time; avoid full refreshes once sellers are working the leads |
+| The marts are rebuilt from scratch on every run and keep no history (only `lead_status` does) | Snapshot or append the states you want to report over time |
+| Duplicates are detected only by an identical e-mail | Fuzzier matching (name + company, normalized phone...) |
+| A lead in an unsupported language is rejected | Route it somewhere (another team, a partner) instead of dropping it |
+| One database user creates, drops and fills every table | Separate users per step, with only the permissions each one needs |
+| Timestamps are naive and treated as UTC | Store the source time zone, or convert at ingestion |
+
 ## Where the tables go
 
 ClickHouse has no schemas, so every table and view lives in one **existing** database, `DB_NAME`

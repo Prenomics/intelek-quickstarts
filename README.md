@@ -2,6 +2,11 @@
 
 Ready-to-run examples for your [Intelek](https://intelek-docs.prenomics.com) account. Each one works on your laptop first, and then as-is in Intelek.
 
+> **This is a demo project.** All the data is synthetic (no real people or companies), some data-quality
+> issues are injected on purpose, and a few steps are done in a way that only makes sense for a demo, to keep
+> it realistic and easy to follow. Use it to learn the tools, not as a production template: see
+> [About this demo](compute/README.md#about-this-demo) for what would change in a real project.
+
 | Quickstart | What it shows | Engine |
 |------------|---------------|--------|
 | [compute/](compute/) | Data pipelines with SQL, Python, Jupyter and dbt: a lead-assignment use case built end to end (unify, clean, assign, report), from raw data imported out of a Postgres database and Excel files | ClickHouse |
