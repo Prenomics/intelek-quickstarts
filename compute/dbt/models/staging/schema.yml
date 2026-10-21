@@ -23,6 +23,17 @@ models:
               arguments:
                 values: ['es', 'ca', 'en', 'fr', 'de', 'pt']
 
+  - name: stg_lead_status
+    description: "Current commercial status per lead (latest row of lead_status)"
+    columns:
+      - name: lead_id
+        data_tests: [unique, not_null]
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['pending', 'contacted', 'interested', 'converted']
+
   - name: stg_leads_rejected
     description: "Leads that cannot be assigned, with the reason"
     columns:

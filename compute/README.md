@@ -43,6 +43,8 @@ flowchart LR
     rejected --> stg
     sp --> stg
     assign --> stg
+    app["Business app (sellers)"] -->|"INSERT status changes"| status[("lead_status")]
+    status --> stg
     stg --> mla
     stg --> msw
     mla --> msw
@@ -58,6 +60,7 @@ ClickHouse has no schemas, so every table and view lives in one **existing** dat
 | Raw | `leads_web_form`, `leads_linkedin`, `sales_people` | You: import from the Postgres origin |
 | Raw | `leads_trade_fair` | You: import from the trade-fair Excels |
 | Staging | `leads`, `leads_clean`, `leads_rejected`, `lead_assignments`, views `stg_*` | SQL, Python and dbt |
+| App | `lead_status` (commercial status, one row per change) | The business app; created empty by dbt / `04` if missing, never dropped |
 | Marts | `mart_lead_assignments`, `mart_seller_workload` | dbt |
 
 The pipeline starts from the 4 raw tables, so import them into `DB_NAME` first, with the column names they have at
@@ -98,7 +101,7 @@ python -m python_ipynb.assign_leads --dry-run        # compute only
 #    ...or run python_ipynb/assign_leads.ipynb top to bottom instead
 #    (or python_ipynb/assign_leads_standalone.ipynb, which needs no utils/ and runs from any folder)
 
-# 5. dbt: stg_* views, mart_* tables, plus tests
+# 5. dbt: creates lead_status if missing, seeds demo statuses, then stg_* views, mart_* tables, plus tests
 cd dbt && dbt build
 #    (from another folder: python -m dbt.cli.main build --project-dir compute/dbt --profiles-dir compute/dbt)
 
@@ -206,12 +209,14 @@ Jupyter working directory. Inside `utils/`, the modules still import each other 
 (same names, same logic and same result with either; run one of them):
 
 - **`stg_*` views** (staging): one per input table (`stg_leads`, `stg_leads_rejected`, `stg_sales_people`,
-  `stg_lead_assignments`). A view is a saved query, so it stores no data and always shows the current input.
+  `stg_lead_assignments`, `stg_lead_status`). A view is a saved query, so it stores no data and always shows the current input.
   They select and type the columns the marts need (e.g. seller languages as arrays).
 - **`mart_lead_assignments`** (table): the final table, one row per lead with its data, its data-quality flags
   (`dq_issues`, `merged_lead_ids`), its seller and how it was assigned. `match_type` is `full_match`,
   `language_only`, `unassigned`, `rejected` (set aside by the cleaning, reason in `match_reason`) or `pending`
   (clean, but not processed by the assignment yet). Leads merged as duplicates appear only in `merged_lead_ids`.
+  `status` is the commercial status set by the sellers (see [Lead status](#lead-status)), with
+  `status_updated_at` and `status_updated_by`.
 - **`mart_seller_workload`** (table): one row per seller with assigned leads, match quality and free capacity.
 - **Tests**, e.g. `lead_id` unique and not null, one lead per e-mail, and no seller over capacity
   (`tests/assert_sellers_within_capacity.sql`). dbt fails the build if one fails; the SQL script instead ends
@@ -221,6 +226,37 @@ ClickHouse does not enforce primary keys: `lead_id` / `seller_id` are the sortin
 tests are what guarantee they are unique.
 
 The marts are rebuilt on every run, so they show the current state, not its history.
+
+### Lead status
+
+`status` tells what the sellers have done with each lead: `pending` (default) → `contacted` → `interested` →
+`converted`. Do not confuse it with `match_type = 'pending'`, which means the assignment has not processed the lead yet.
+
+The sellers change it from a business app, which must **not** write to `mart_lead_assignments`: that table is
+rebuilt on every run, so the changes would be lost. The app writes to `lead_status` instead:
+
+- **Append-only log, one row per change.** To change a status, `INSERT` a row; never `UPDATE` (in ClickHouse an
+  `UPDATE` is a slow, asynchronous mutation). The current status of a lead is its latest row, and the whole
+  history stays available.
+  ```sql
+  INSERT INTO lead_status (lead_id, status, updated_by, note)
+  VALUES ('WEB-0003', 'contacted', 'S01', 'Called, wants a demo next week');
+  ```
+  `updated_at` defaults to now. A `CHECK` constraint rejects any status other than the four above.
+- **No row = `pending`.** New leads need no row; they show as `pending` until someone changes them.
+- **Owned by the app.** dbt (`on-run-start` hook, `dbt/macros/create_lead_status_table.sql`) and
+  `sql/04_consolidate_leads_and_sales.sql` only create the table if it does not exist; nothing in the pipeline
+  drops or rewrites it.
+- **Freshness.** `mart_lead_assignments.status` reflects `lead_status` as of the last dbt / `04` run. For the live
+  value (e.g. inside the app), read the `stg_lead_status` view, which is computed on every query.
+
+**Demo statuses.** So the reports have something to show, dbt fakes some changes right after creating
+`lead_status` (`dbt/macros/seed_lead_status_demo.sql`, also an `on-run-start` hook): of the assigned leads,
+~20% contacted, ~12% interested and ~8% converted (each with its full history), the rest pending. It skips
+leads that already have a status, so the app's changes are never touched and running it again adds nothing.
+It runs on every dbt run, so it also seeds leads assigned later: on real data, disable it with
+`dbt build --vars '{seed_demo_status: false}'` (or `seed_demo_status: false` in `dbt_project.yml`).
+`sql/04_consolidate_leads_and_sales.sql` does the same in its section 0b; delete that block on real data.
 
 ## Credentials
 
@@ -268,7 +304,8 @@ The file holds no secrets and is committed. dbt picks it up from the project fol
 
 - **Cleaning:** 100 leads → 98 in `leads_clean` (3 flagged), 1 in `leads_rejected` (`FAIR-005`), 1 merged (`LI-90003` into `WEB-0003`).
 - **Assignment:** 98 leads, 8 unassigned (candidates at capacity), and S08 gets 0 leads.
-- **dbt:** 4 views + 2 tables + 22 tests, all passing. `mart_lead_assignments` has the 99 leads: 69 `full_match`, 21 `language_only`, 8 `unassigned`, 1 `rejected`.
+- **dbt:** 2 hooks + 5 views + 2 tables + 27 tests, all passing. `mart_lead_assignments` has the 99 leads: 69 `full_match`, 21 `language_only`, 8 `unassigned`, 1 `rejected`.
+- **Demo statuses** (dbt / `04`): 69 `pending`, 16 `contacted`, 7 `interested`, 7 `converted`.
 
 With `leads_trade_fair_2.xlsx` also loaded into `leads_trade_fair`: 120 leads → 118 clean, 1 rejected, 1 merged;
 22 unassigned.

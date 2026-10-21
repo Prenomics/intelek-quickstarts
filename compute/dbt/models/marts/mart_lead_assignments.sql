@@ -3,6 +3,8 @@
 -- One row per lead with its assigned seller (if any).
 -- Leads that the Python step has not processed yet appear as 'pending';
 -- leads set aside by the cleaning step appear as 'rejected', with the reason.
+-- status is the commercial status set by the sellers in the business app (lead_status):
+-- 'pending' until someone changes it. It reflects lead_status as of the last run.
 WITH clean AS (
     SELECT
         l.lead_id                                           AS lead_id,
@@ -23,10 +25,14 @@ WITH clean AS (
         a.reason                                            AS match_reason,
         a.assigned_at                                       AS assigned_at,
         round(dateDiff('second', l.created_at, a.assigned_at) / 86400, 1)
-                                                            AS days_to_assign
+                                                            AS days_to_assign,
+        ifNull(st.status, 'pending')                        AS status,
+        st.status_updated_at                                AS status_updated_at,
+        st.status_updated_by                                AS status_updated_by
     FROM {{ ref('stg_leads') }} l
     LEFT JOIN {{ ref('stg_lead_assignments') }} a ON a.lead_id = l.lead_id
     LEFT JOIN {{ ref('stg_sales_people') }} s     ON s.seller_id = a.seller_id
+    LEFT JOIN {{ ref('stg_lead_status') }} st     ON st.lead_id = l.lead_id
     SETTINGS join_use_nulls = 1
 ),
 
@@ -49,9 +55,14 @@ rejected AS (
         'rejected'                                          AS match_type,
         r.rejection_reason                                  AS match_reason,
         NULL                                                AS assigned_at,
-        NULL                                                AS days_to_assign
+        NULL                                                AS days_to_assign,
+        ifNull(st.status, 'pending')                        AS status,
+        st.status_updated_at                                AS status_updated_at,
+        st.status_updated_by                                AS status_updated_by
     FROM {{ ref('stg_leads_rejected') }} r
+    LEFT JOIN {{ ref('stg_lead_status') }} st ON st.lead_id = r.lead_id
     WHERE r.lead_id IS NOT NULL   -- leads without id stay only in leads_rejected
+    SETTINGS join_use_nulls = 1
 )
 
 SELECT * FROM clean

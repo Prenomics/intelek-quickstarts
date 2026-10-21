@@ -13,6 +13,13 @@ models:
           - accepted_values:
               arguments:
                 values: ['full_match', 'language_only', 'unassigned', 'pending', 'rejected']
+      - name: status
+        description: "Commercial status set by the sellers in the business app: pending (default) | contacted | interested | converted"
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['pending', 'contacted', 'interested', 'converted']
 
   - name: mart_seller_workload
     description: "One row per seller with assigned leads, match quality and remaining capacity"
