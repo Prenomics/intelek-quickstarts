@@ -26,3 +26,12 @@ clean-targets:         # directories to be removed by `dbt clean`
   - "dbt_packages"
 
 # Materializations are set in each model with {{ config(...) }}.
+
+# lead_status belongs to the business app (sellers update it); dbt only creates it if missing.
+# Then, for the demo, fake some status changes (disable on real data: --vars '{seed_demo_status: false}')
+on-run-start:
+  - "{{ create_lead_status_table() }}"
+  - "{{ seed_lead_status_demo() }}"
+
+vars:
+  seed_demo_status: true

@@ -19,3 +19,5 @@ sources:
         description: "Leads that cannot be assigned, with rejection_reason (python_ipynb/basic_transf.py)"
       - name: lead_assignments
         description: "Lead -> seller assignments (python_ipynb/assign_leads.py)"
+      - name: lead_status
+        description: "Status changes written by the business app (one row per change; created by the on-run-start hook)"
