@@ -12,11 +12,14 @@
    leads_rejected    -> python_ipynb/basic_transf.py   (leads that cannot be assigned)
    lead_assignments  -> python_ipynb/assign_leads.py   (lead -> seller)
    sales_people      -> raw table imported from Postgres
+   lead_status       -> status changes written by the business app (created here if missing;
+                        section 0b fakes some changes for the demo: delete it on real data)
 
  Output:
-   stg_leads, stg_leads_rejected, stg_sales_people, stg_lead_assignments  (views)
+   stg_leads, stg_leads_rejected, stg_sales_people, stg_lead_assignments, stg_lead_status  (views)
    mart_lead_assignments  -> one row per lead: data, dq flags, seller, match type
                              (full_match | language_only | unassigned | rejected | pending)
+                             and commercial status (pending | contacted | interested | converted)
    mart_seller_workload   -> one row per seller: assigned leads, match quality, free capacity
 
  The last query replays the dbt tests: one row per test with its failing rows.
@@ -25,6 +28,53 @@
  The script is idempotent: it replaces the views and rebuilds the tables on every run.
 ================================================================================
 */
+
+-- ---------------------------------------------------------------------------
+-- 0) lead_status belongs to the business app (sellers update it): only create it if
+--    missing, never drop it. Same as dbt/macros/create_lead_status_table.sql
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS lead_status (
+    lead_id     String,
+    status      LowCardinality(String),
+    updated_at  DateTime64(3, 'UTC') DEFAULT now64(3),
+    updated_by  Nullable(String),                 -- seller or user who made the change
+    note        Nullable(String),
+    CONSTRAINT valid_status CHECK status IN ('pending', 'contacted', 'interested', 'converted')
+)
+ENGINE = MergeTree
+ORDER BY (lead_id, updated_at);
+
+
+-- ---------------------------------------------------------------------------
+-- 0b) DEMO ONLY: fake some status changes, as if the sellers had already worked on
+--     some leads (same as dbt/macros/seed_lead_status_demo.sql). Delete this block on
+--     real data: it would also seed the leads assigned in later runs.
+--     Of the assigned leads: ~20% contacted, ~12% interested, ~8% converted (one row per
+--     step), the rest pending. Leads that already have a status are skipped.
+-- ---------------------------------------------------------------------------
+INSERT INTO lead_status (lead_id, status, updated_at, updated_by, note)
+WITH picked AS (
+    SELECT
+        assumeNotNull(lead_id)                              AS lead_id,
+        seller_id,
+        multiIf(cityHash64(lead_id) % 100 < 8,  3,          -- converted
+                cityHash64(lead_id) % 100 < 20, 2,          -- interested
+                cityHash64(lead_id) % 100 < 40, 1,          -- contacted
+                0)                                          AS final_stage
+    FROM lead_assignments
+    WHERE seller_id IS NOT NULL
+      AND lead_id NOT IN (SELECT lead_id FROM lead_status)
+)
+SELECT
+    lead_id,
+    ['contacted', 'interested', 'converted'][stage]         AS status,
+    now64(3) + toIntervalSecond(stage)                      AS updated_at,   -- keeps the steps in order
+    seller_id                                               AS updated_by,
+    'demo seed'                                             AS note
+FROM picked
+ARRAY JOIN range(1, final_stage + 1) AS stage
+WHERE final_stage > 0;
+
 
 -- ---------------------------------------------------------------------------
 -- 1) Staging views: one per input table (same as dbt/models/staging)
@@ -85,11 +135,25 @@ SELECT
     run_id
 FROM lead_assignments;
 
+-- Current status per lead: lead_status is an append-only log (one row per change),
+-- so the current status is the latest row of each lead. Leads with no row are 'pending' (in the mart).
+CREATE OR REPLACE VIEW stg_lead_status AS
+SELECT
+    lead_id,
+    argMax(status, updated_at)                          AS status,
+    max(updated_at)                                     AS status_updated_at,
+    argMax(updated_by, updated_at)                      AS status_updated_by,
+    count()                                             AS n_status_changes
+FROM lead_status
+GROUP BY lead_id;
+
 
 -- ---------------------------------------------------------------------------
 -- 2) mart_lead_assignments: one row per lead with its assigned seller (if any).
 --    Leads that the Python step has not processed yet appear as 'pending';
 --    leads set aside by the cleaning step appear as 'rejected', with the reason.
+--    status is the commercial status set by the sellers in the business app (lead_status):
+--    'pending' until someone changes it. It reflects lead_status as of the last run.
 -- ---------------------------------------------------------------------------
 DROP TABLE IF EXISTS mart_lead_assignments;
 
@@ -117,10 +181,14 @@ WITH clean AS (
         a.reason                                            AS match_reason,
         a.assigned_at                                       AS assigned_at,
         round(dateDiff('second', l.created_at, a.assigned_at) / 86400, 1)
-                                                            AS days_to_assign
+                                                            AS days_to_assign,
+        ifNull(st.status, 'pending')                        AS status,
+        st.status_updated_at                                AS status_updated_at,
+        st.status_updated_by                                AS status_updated_by
     FROM stg_leads l
     LEFT JOIN stg_lead_assignments a ON a.lead_id = l.lead_id
     LEFT JOIN stg_sales_people s     ON s.seller_id = a.seller_id
+    LEFT JOIN stg_lead_status st     ON st.lead_id = l.lead_id
     SETTINGS join_use_nulls = 1
 ),
 
@@ -143,9 +211,14 @@ rejected AS (
         'rejected'                                          AS match_type,
         r.rejection_reason                                  AS match_reason,
         NULL                                                AS assigned_at,
-        NULL                                                AS days_to_assign
+        NULL                                                AS days_to_assign,
+        ifNull(st.status, 'pending')                        AS status,
+        st.status_updated_at                                AS status_updated_at,
+        st.status_updated_by                                AS status_updated_by
     FROM stg_leads_rejected r
+    LEFT JOIN stg_lead_status st ON st.lead_id = r.lead_id
     WHERE r.lead_id IS NOT NULL   -- leads without id stay only in leads_rejected
+    SETTINGS join_use_nulls = 1
 )
 
 SELECT * FROM clean
@@ -221,6 +294,15 @@ FROM (
            (SELECT count() FROM stg_leads WHERE preferred_language IS NOT NULL
                 AND preferred_language NOT IN ('es', 'ca', 'en', 'fr', 'de', 'pt'))
 
+    -- stg_lead_status
+    UNION ALL SELECT 23, 'stg_lead_status.lead_id unique',
+           (SELECT count() FROM (SELECT lead_id FROM stg_lead_status GROUP BY lead_id HAVING count() > 1))
+    UNION ALL SELECT 24, 'stg_lead_status.lead_id not_null',
+           (SELECT count() FROM stg_lead_status WHERE lead_id IS NULL)
+    UNION ALL SELECT 25, 'stg_lead_status.status accepted_values',
+           (SELECT count() FROM stg_lead_status
+            WHERE status NOT IN ('pending', 'contacted', 'interested', 'converted'))
+
     -- stg_leads_rejected
     UNION ALL SELECT 9, 'stg_leads_rejected.lead_id unique',
            (SELECT count() FROM (SELECT lead_id FROM stg_leads_rejected WHERE lead_id IS NOT NULL
@@ -251,6 +333,11 @@ FROM (
     UNION ALL SELECT 18, 'mart_lead_assignments.match_type accepted_values',
            (SELECT count() FROM mart_lead_assignments
             WHERE match_type NOT IN ('full_match', 'language_only', 'unassigned', 'pending', 'rejected'))
+    UNION ALL SELECT 26, 'mart_lead_assignments.status not_null',
+           (SELECT count() FROM mart_lead_assignments WHERE status IS NULL)
+    UNION ALL SELECT 27, 'mart_lead_assignments.status accepted_values',
+           (SELECT count() FROM mart_lead_assignments
+            WHERE status NOT IN ('pending', 'contacted', 'interested', 'converted'))
 
     -- mart_seller_workload
     UNION ALL SELECT 19, 'mart_seller_workload.seller_id unique',
